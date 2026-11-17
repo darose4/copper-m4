@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AskCopper } from "@/components/copper/ask-copper";
+import { RefundConsole } from "@/components/copper/refund-console";
 import { SiteHeader } from "@/components/copper/site-header";
 import { isAiConfigured } from "@/lib/ai/call";
 
@@ -15,6 +16,11 @@ export default function Support() {
         className="mx-auto w-full max-w-3xl flex-1 px-4 py-8"
       >
         <h1 className="font-display text-3xl font-bold">Refund Console</h1>
+        <p className="text-muted-foreground mt-2 mb-6 max-w-prose text-sm">
+          Ask Copper for a refund in the chat. Small ones go through on their
+          own; bigger ones wait here until a person approves or rejects them.
+        </p>
+        <RefundConsole />
       </main>
       <AskCopper aiConfigured={isAiConfigured()} docked />
     </div>

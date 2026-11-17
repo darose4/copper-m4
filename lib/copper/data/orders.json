@@ -1,0 +1,60 @@
+{
+  "orders": [
+    {
+      "id": "CSL-1001",
+      "customer": "Dana Reyes",
+      "email": "dana.reyes@example.com",
+      "placedOn": "2026-10-28",
+      "items": ["Copper Plus, monthly"],
+      "totalUsd": 7.99
+    },
+    {
+      "id": "CSL-1002",
+      "customer": "Dana Reyes",
+      "email": "dana.reyes@example.com",
+      "placedOn": "2026-10-30",
+      "items": ["Copper Plus, annual"],
+      "totalUsd": 79
+    },
+    {
+      "id": "CSL-1003",
+      "customer": "Marcus Lee",
+      "email": "marcus.lee@example.com",
+      "placedOn": "2026-11-02",
+      "items": ["Copper Home (Night Sky)"],
+      "totalUsd": 149
+    },
+    {
+      "id": "CSL-1004",
+      "customer": "Priya Shah",
+      "email": "priya.shah@example.com",
+      "placedOn": "2026-11-05",
+      "items": ["Copper Notes (Desert Sand)"],
+      "totalUsd": 129
+    },
+    {
+      "id": "CSL-1005",
+      "customer": "Priya Shah",
+      "email": "priya.shah@example.com",
+      "placedOn": "2026-11-09",
+      "items": ["Copper Plus, monthly"],
+      "totalUsd": 7.99
+    },
+    {
+      "id": "CSL-1006",
+      "customer": "Sam Ortiz",
+      "email": "sam.ortiz@example.com",
+      "placedOn": "2026-11-11",
+      "items": ["Copper Home (Polished Copper)", "Copper Plus, monthly, 1 month"],
+      "totalUsd": 156.99
+    },
+    {
+      "id": "CSL-1007",
+      "customer": "Sam Ortiz",
+      "email": "sam.ortiz@example.com",
+      "placedOn": "2026-11-14",
+      "items": ["Copper Plus, monthly"],
+      "totalUsd": 7.99
+    }
+  ]
+}

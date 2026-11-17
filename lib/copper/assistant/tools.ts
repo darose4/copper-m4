@@ -15,6 +15,7 @@ import {
 import { DOCUMENTS, pageUrl } from "@/lib/copper/documents";
 import { readInventory } from "@/lib/copper/inventory";
 import { PASSAGES } from "@/lib/copper/passages";
+import { findOrders, requestRefund } from "@/lib/copper/refunds";
 
 export type ProductList = {
   products: {
@@ -233,6 +234,13 @@ export async function searchDocs(query: string): Promise<DocSearchResult> {
   return { matches };
 }
 
+/** The hand-off tools take a one-line summary so the next agent knows why. */
+const handoffInput = z.object({
+  summary: z
+    .string()
+    .describe("One short line on what the customer wants, in their words."),
+});
+
 export const copperTools = {
   get_products: tool({
     description:
@@ -269,5 +277,71 @@ export const copperTools = {
         ),
     }),
     execute: async ({ query }) => searchDocs(query),
+  }),
+  transfer_refund: tool({
+    description:
+      "Hands the chat to the Refund agent. Use it when the customer wants money back for an order they already placed (for example 'refund my order CSL-1002'). Not for questions about how refunds work: use search_docs for those.",
+    inputSchema: handoffInput,
+    execute: async ({ summary }) => ({
+      status: "transferred" as const,
+      to: "Refund agent",
+      summary,
+    }),
+  }),
+};
+
+/** The Refund agent's tools (Module 4). Orders and the refund rule live in lib/copper/refunds.ts. */
+export const refundTools = {
+  get_orders: tool({
+    description:
+      "Looks up a customer's orders by the email on the order and/or the order number (like CSL-1002). Each order comes back with its total and any refund already asked for. Needs at least one of the two.",
+    inputSchema: z.object({
+      email: z.string().optional().describe("The email on the order."),
+      orderId: z.string().optional().describe("The order number, e.g. CSL-1002."),
+    }),
+    execute: async ({ email, orderId }) => {
+      if (!email?.trim() && !orderId?.trim())
+        return {
+          status: "need_details" as const,
+          message: "Ask the customer for the email on the order or the order number.",
+        };
+      return {
+        status: "ok" as const,
+        orders: findOrders({ email, orderId }).map((o) => ({
+          id: o.id,
+          customer: o.customer,
+          placedOn: o.placedOn,
+          items: o.items,
+          totalUsd: o.totalUsd,
+          refund: o.refund && {
+            id: o.refund.id,
+            status: o.refund.status,
+            amountUsd: o.refund.amountUsd,
+          },
+        })),
+      };
+    },
+  }),
+  request_refund: tool({
+    description:
+      "Asks for a full refund of one order. The app decides by its own rule: at or under the auto-refund limit it is refunded now; over the limit it waits for a person in the Refund Console. You cannot change that outcome. Only call it for an order that get_orders returned.",
+    inputSchema: z.object({
+      orderId: z.string().describe("The order number, e.g. CSL-1002."),
+      reason: z
+        .string()
+        .min(3)
+        .describe("Why the customer wants the refund, in their words."),
+    }),
+    execute: async (input) => requestRefund(input),
+  }),
+  transfer_support: tool({
+    description:
+      "Hands the chat back to Copper Support. Use it when the customer asks about anything other than a refund: products, prices, stock, setup, troubleshooting, warranty or policy.",
+    inputSchema: handoffInput,
+    execute: async ({ summary }) => ({
+      status: "transferred" as const,
+      to: "Copper Support",
+      summary,
+    }),
   }),
 };

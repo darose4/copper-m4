@@ -10,6 +10,7 @@ import {
   ArrowUpIcon,
   BrainIcon,
   MessageCircleIcon,
+  RepeatIcon,
   TriangleAlertIcon,
   WrenchIcon,
   XIcon,
@@ -30,6 +31,9 @@ import { readLive } from "@/lib/ai/live";
 import { askCopper, type ChatMessage } from "@/lib/copper/assistant/ask";
 import { splitCitations } from "@/lib/copper/assistant/citations";
 import {
+  AGENT_NAMES,
+  AGENT_TOOLS,
+  type AgentId,
   type Progress,
   type ToolStep,
   TOOL_LABELS,
@@ -41,12 +45,28 @@ const STARTERS = [
   "How much is Copper Home with Copper Plus, paid yearly, for 2 years?",
   "Is Copper Notes in Night Sky in stock?",
   "Is Copper Plus cheaper monthly or yearly?",
+  "I want a refund for order CSL-1001 (dana.reyes@example.com).",
 ];
 
-type Turn = { question: string; progress: Progress };
+// Once the Refund agent has the chat, its starters are about orders.
+const REFUND_STARTERS = [
+  "Refund order CSL-1002, my email is dana.reyes@example.com.",
+  "What orders do I have? My email is priya.shah@example.com.",
+];
+
+/** The Refund Console sends this when a person approves or rejects a refund. */
+export const REFUND_DECIDED_EVENT = "copper:refund-decided";
+
+/** A notice is a message from an agent that nobody asked for (a refund decision). */
+type Turn = { question: string; progress: Progress; notice?: boolean };
 type Chats = { tools: Turn[]; noTools: Turn[] };
 
-const WORKING: Progress = { steps: [], reply: "", status: "working" };
+const WORKING: Progress = {
+  steps: [],
+  reply: "",
+  status: "working",
+  agent: "copper",
+};
 
 export function AskCopper({
   aiConfigured,
@@ -64,7 +84,11 @@ export function AskCopper({
 
   const key = useTools ? "tools" : "noTools";
   const turns = chats[key];
-  const busy = turns.at(-1)?.progress.status === "working";
+  const busy = turns.some((turn) => turn.progress.status === "working");
+  // The chat stays with whichever agent spoke last, until it hands back.
+  const agent: AgentId = useTools
+    ? (turns.findLast((turn) => !turn.notice)?.progress.agent ?? "copper")
+    : "copper";
 
   // Open from the header's #ask link or a page load at /#ask. Clicking the
   // link again fires no hashchange, so listen for the click too.
@@ -82,6 +106,29 @@ export function AskCopper({
     };
   }, []);
 
+  // The Refund Console tells the chat when a person decides a refund, and the
+  // Refund agent passes the news on to the customer.
+  useEffect(() => {
+    const onDecided = (event: Event) => {
+      const text = (event as CustomEvent<{ text: string }>).detail?.text;
+      if (!text) return;
+      setChats((all) => ({
+        ...all,
+        tools: [
+          ...all.tools,
+          {
+            question: "",
+            notice: true,
+            progress: { steps: [], reply: text, status: "done", agent: "refund" },
+          },
+        ],
+      }));
+      setUseTools(true);
+    };
+    window.addEventListener(REFUND_DECIDED_EVENT, onDecided);
+    return () => window.removeEventListener(REFUND_DECIDED_EVENT, onDecided);
+  }, []);
+
   useEffect(() => {
     if (body.current) body.current.scrollTop = body.current.scrollHeight;
   }, [chats, useTools]);
@@ -93,9 +140,12 @@ export function AskCopper({
     const chat = key;
     const index = turns.length;
     // Only finished turns go to the model: questions and Copper's replies.
+    // A notice has no question, so it goes as just the agent's message.
     const messages: ChatMessage[] = [
       ...turns.flatMap(({ question, progress }): ChatMessage[] => [
-        { role: "user", content: question },
+        ...(question
+          ? [{ role: "user" as const, content: question }]
+          : []),
         { role: "assistant", content: progress.reply },
       ]),
       { role: "user", content: question },
@@ -115,6 +165,8 @@ export function AskCopper({
       const { progress } = await askCopper({
         messages,
         useTools: chat === "tools",
+        // Only named once the Refund agent has the chat; Copper is the default.
+        ...(agent === "refund" && { agent }),
       });
       for await (const update of readLive(progress)) setProgress(update);
     } catch {
@@ -122,6 +174,7 @@ export function AskCopper({
         steps: [],
         reply: "Sorry, I couldn't reach Copper. Please try again.",
         status: "error",
+        agent,
       });
     }
   }
@@ -156,8 +209,13 @@ export function AskCopper({
                 <SheetTitle className="text-base font-bold text-white">
                   Ask Copper
                 </SheetTitle>
-                <SheetDescription className="text-xs text-white/70">
-                  Prices, totals and stock, checked with tools.
+                <SheetDescription
+                  data-testid="chat-agent"
+                  className="text-xs text-white/70"
+                >
+                  {agent === "refund"
+                    ? "You're chatting with the Refund agent."
+                    : "Prices, totals and stock, checked with tools."}
                 </SheetDescription>
               </div>
               <SheetClose asChild>
@@ -194,32 +252,49 @@ export function AskCopper({
                 ref={body}
                 className="bg-secondary flex-1 space-y-6 overflow-y-auto px-4 py-5"
               >
-                {turns.map((turn, i) => (
-                  <div key={i} className="space-y-4">
-                    <p className="bg-primary text-primary-foreground ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2">
-                      {turn.question}
-                    </p>
-                    <Answer progress={turn.progress} useTools={useTools} />
-                  </div>
-                ))}
+                {turns.map((turn, i) =>
+                  turn.notice ? (
+                    <div
+                      key={i}
+                      data-testid="refund-notice"
+                      className="bg-card border-chart-5 ml-2 rounded-2xl rounded-tl-sm border-2 p-4 shadow-xs"
+                    >
+                      <p className="text-primary mb-1 text-xs font-bold">
+                        {AGENT_NAMES.refund}
+                      </p>
+                      <p className="text-sm whitespace-pre-wrap">
+                        {turn.progress.reply}
+                      </p>
+                    </div>
+                  ) : (
+                    <div key={i} className="space-y-4">
+                      <p className="bg-primary text-primary-foreground ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2">
+                        {turn.question}
+                      </p>
+                      <Answer progress={turn.progress} useTools={useTools} />
+                    </div>
+                  ),
+                )}
                 {!busy && (
                   <div className="space-y-2">
                     {turns.length === 0 && (
                       <p className="text-muted-foreground text-sm">
-                        Hi, I&apos;m Copper! Ask me about prices, totals or
-                        stock. Try one of these:
+                        Hi, I&apos;m Copper! Ask me about prices, totals, stock
+                        or a refund. Try one of these:
                       </p>
                     )}
-                    {STARTERS.map((starter) => (
-                      <button
-                        key={starter}
-                        type="button"
-                        onClick={() => send(starter)}
-                        className="bg-background hover:border-primary block w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors"
-                      >
-                        {starter}
-                      </button>
-                    ))}
+                    {(agent === "refund" ? REFUND_STARTERS : STARTERS).map(
+                      (starter) => (
+                        <button
+                          key={starter}
+                          type="button"
+                          onClick={() => send(starter)}
+                          className="bg-background hover:border-primary block w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors"
+                        >
+                          {starter}
+                        </button>
+                      ),
+                    )}
                   </div>
                 )}
               </div>
@@ -234,7 +309,11 @@ export function AskCopper({
                   aria-label="Your question"
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Ask about prices or stock…"
+                  placeholder={
+                    agent === "refund"
+                      ? "Tell the Refund agent about your order…"
+                      : "Ask about prices, stock or a refund…"
+                  }
                   className="bg-background focus-visible:ring-ring h-10 flex-1 rounded-full border px-4 text-sm outline-none focus-visible:ring-2"
                 />
                 <Button
@@ -273,6 +352,20 @@ function Answer({
   );
   const working = status === "working";
   let toolCount = 0;
+  // The answer starts with whichever agent had the chat, and changes at each hand-off.
+  const endAgent: AgentId = progress.agent ?? "copper";
+  const firstHandoff = steps.find((s) => s.type === "handoff");
+  const startAgent: AgentId =
+    firstHandoff?.type === "handoff" ? firstHandoff.from : endAgent;
+  // Who is speaking at each step.
+  const speakers = steps.reduce<AgentId[]>(
+    (all, step) => [
+      ...all,
+      step.type === "handoff" ? step.to : (all.at(-1) ?? startAgent),
+    ],
+    [],
+  );
+  const agentName = AGENT_NAMES[endAgent];
   return (
     <div className="space-y-3">
       <div className="relative space-y-4 pl-9">
@@ -289,11 +382,13 @@ function Answer({
           node={<WrenchIcon className="size-3" />}
           nodeClass="bg-muted-foreground"
           label={
-            useTools ? "Tools Copper can use" : "Tools given to Copper: none"
+            useTools
+              ? `Tools ${AGENT_NAMES[startAgent]} can use`
+              : "Tools given to Copper: none"
           }
         >
           <div className="flex flex-wrap gap-1.5">
-            {Object.keys(TOOL_LABELS).map((name) => (
+            {AGENT_TOOLS[startAgent].map((name) => (
               <span
                 key={name}
                 className={cn(
@@ -319,13 +414,33 @@ function Answer({
           )}
         </Station>
 
-        {steps.map((step, i) =>
-          step.type === "thinking" ? (
+        {steps.map((step, i) => {
+          if (step.type === "handoff") {
+            return (
+              <Station
+                key={i}
+                node={<RepeatIcon className="size-3" />}
+                nodeClass="bg-chart-5"
+                label="Hand-off"
+              >
+                <p
+                  data-testid="handoff"
+                  className="bg-card rounded-xl border px-3 py-2 text-sm"
+                >
+                  <strong>{AGENT_NAMES[step.from]}</strong> handed the chat to{" "}
+                  <strong>{AGENT_NAMES[step.to]}</strong>, which has its own
+                  instructions and tools.
+                </p>
+              </Station>
+            );
+          }
+          const who = speakers[i] === "refund" ? "The Refund agent" : "Copper";
+          return step.type === "thinking" ? (
             <Station
               key={i}
               node={<BrainIcon className="size-3" />}
               nodeClass={useTools ? "bg-primary" : "bg-chart-3"}
-              label="Copper is thinking"
+              label={`${who} is thinking`}
             >
               <p
                 data-testid="thinking"
@@ -341,14 +456,14 @@ function Answer({
               nodeClass="bg-accent"
               label={
                 step.state === "calling"
-                  ? "Copper is calling a tool"
-                  : "Copper called a tool"
+                  ? `${who} is calling a tool`
+                  : `${who} called a tool`
               }
             >
               <ToolCard step={step} number={++toolCount} />
             </Station>
-          ),
-        )}
+          );
+        })}
 
         {working && (
           <div className="relative">
@@ -376,7 +491,9 @@ function Answer({
 
       {(reply || !working) && (
         <div className="bg-card ml-2 rounded-2xl rounded-tl-sm border p-4 shadow-xs">
-          <p className="text-primary mb-1 text-xs font-bold">Copper</p>
+          <p className="text-primary mb-1 text-xs font-bold">
+            {useTools && endAgent === "refund" ? agentName : "Copper"}
+          </p>
           {!useTools && (
             <div className="border-chart-3 bg-chart-3/10 mb-3 rounded-lg border p-3 text-xs">
               <p className="flex items-center gap-1.5 font-bold">
@@ -655,6 +772,64 @@ function ToolOutput({ name, output }: { name: string; output: any }) {
           </li>
         ))}
       </ol>
+    );
+  if (name === "get_orders" && output?.status === "ok")
+    return output.orders.length === 0 ? (
+      <p className="text-xs">No orders found for that.</p>
+    ) : (
+      <ul className="space-y-1.5 text-xs">
+        {output.orders.map((o: any) => (
+          <li key={o.id} className="flex items-start justify-between gap-2">
+            <span>
+              <span className="font-mono font-semibold">{o.id}</span>{" "}
+              {o.items.join(", ")}
+            </span>
+            <span className="shrink-0 text-right">
+              <span className="font-mono">{formatUsd(o.totalUsd)}</span>
+              {o.refund && (
+                <span className="text-muted-foreground block">
+                  refund {o.refund.status}
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  if (name === "get_orders" && output?.status === "need_details")
+    return <p className="text-xs">{output.message}</p>;
+  if (name === "request_refund" && output?.status) {
+    const refund = output.refund;
+    if (output.status === "not_found")
+      return <p className="text-xs">No order {output.orderId}.</p>;
+    const label =
+      output.status === "refunded"
+        ? `Refunded ${formatUsd(refund.amountUsd)}`
+        : output.status === "pending_approval"
+          ? `Waiting for a person: ${formatUsd(refund.amountUsd)} is over the limit`
+          : `Already asked for: ${refund.status}`;
+    return (
+      <div className="space-y-1 text-xs">
+        <Pill
+          className={
+            output.status === "refunded"
+              ? "bg-accent text-white"
+              : "bg-chart-4 text-chart-5"
+          }
+        >
+          {label}
+        </Pill>
+        <p className="text-muted-foreground">
+          Order {refund.orderId}, refund {refund.id}
+        </p>
+      </div>
+    );
+  }
+  if (output?.status === "transferred")
+    return (
+      <p className="text-xs">
+        Chat handed to {output.to}: {output.summary}
+      </p>
     );
   // A tool without its own layout yet: show what came back as plain text.
   return (
